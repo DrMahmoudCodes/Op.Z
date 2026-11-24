@@ -11,6 +11,13 @@
    لو سبته فاضي، اللعبة هتشتغل في وضع التجربة على الجهاز ده بس. */
 window.OPZ_API_URL = "https://script.google.com/macros/s/AKfycbxXTXojzFttYQwaMcWXbgPZmaTzrZ6qo-YpxBQEjgW7dMTV_8C1LlVImhOKGkEXnKv9/exec";
 </script>
+<script>
+/* ================= فيديو الانترو =================
+   حط هنا لينك يوتيوب (أي شكل: youtu.be/… أو watch?v=… أو shorts/…).
+   لو سبته فاضي، هيتاخد اللينك من IntroVideoURL في تبويب Config في الشيت. */
+window.OPZ_INTRO_URL = "https://youtu.be/b18oogwMO8A";
+</script>
+<link rel="preconnect" href="https://www.youtube.com">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Baloo+Bhaijaan+2:wght@600;800&family=Cairo:wght@400;600;700;900&family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
@@ -540,7 +547,7 @@ textarea.input{min-height:110px;resize:vertical;font-size:16px}
     <div class="introTop"><span class="chip warn" id="introTag">رسالة عاجلة من القيادة</span></div>
     <div class="videoWrap"><div id="videoWrap" style="width:100%;height:100%"></div><button class="vidOverlay hidden" id="vidOv"></button></div>
     <div class="introBar"><div class="ibar"><i id="introProg"></i></div><span id="introTime" class="en"></span></div>
-    <div class="introActions"><button class="btn" id="bIntroNext" disabled>شاهدوا الفيديو للآخر علشان تكمّلوا</button><button class="btn ghost hidden" id="bIntroSkip">تخطي الفيديو</button><button class="iconbtn" id="bIntroSound" aria-label="الصوت">🔊</button></div>
+    <div class="introActions"><button class="btn" id="bIntroNext" disabled>شاهدوا الفيديو للآخر علشان تكمّلوا</button><button class="btn ghost" id="bIntroSkip">تخطي الفيديو ⏭</button><button class="iconbtn" id="bIntroSound" aria-label="الصوت">🔊</button></div>
   </div></section>
 
   <!-- REGISTER -->
@@ -1303,6 +1310,7 @@ $('#wm').src = ASSETS.wordmark;
 async function boot() {
   setScene('boot');
   try { G.boot = await API.call('api_boot'); } catch (e) { G.boot = { introUrl: '', allowSolo: false }; err(e); }
+  if (window.OPZ_INTRO_URL) G.boot.introUrl = String(window.OPZ_INTRO_URL).trim();
   if (!G.boot.allowSolo) $('#modeBox').classList.add('hidden');
   if (API.mode === 'demo') { const c = document.createElement('div'); c.className = 'chip warn'; c.style.marginTop = '16px'; c.textContent = 'وضع التجربة: اللعبة شغالة على الجهاز ده بس'; $('#s-boot .center').insertBefore(c, $('.presented')); }
   if (G.boot.introUrl) $('#bReplay').classList.remove('hidden');
@@ -1327,33 +1335,87 @@ $('#codeForm').onsubmit = async e => { e.preventDefault(); const c = $('#tCode')
 function embed(u) {
   let m;
   if ((m = u.match(/drive\.google\.com\/file\/d\/([^/?]+)/)) || (m = u.match(/[?&]id=([^&]+)/))) return `<iframe src="https://drive.google.com/file/d/${m[1]}/preview" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
-  if ((m = u.match(/(?:youtu\.be\/|v=|embed\/)([\w-]{11})/))) return `<iframe src="https://www.youtube.com/embed/${m[1]}?autoplay=1&rel=0&modestbranding=1" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
+  const y = ytId(u); if (y) return `<iframe src="https://www.youtube.com/embed/${y}?autoplay=1&rel=0&modestbranding=1&playsinline=1" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>`;
   return `<video src="${esc(u)}" controls autoplay playsinline></video>`;
 }
 /* ======================================================= INTRO VIDEO
    First visit on this device: plays by itself and must be watched to the end (no skip, no seeking).
    Later visits: a skip button appears. */
 let introTimer = null;
+/** YouTube video id from any link shape (youtu.be, watch?v=, embed, shorts, live). */
+function ytId(u) { const m = String(u || '').match(/(?:youtu\.be\/|youtube(?:-nocookie)?\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|live\/|v\/))([\w-]{11})/); return m ? m[1] : null; }
+let ytApi = null;
+function loadYT() {
+  if (window.YT && YT.Player) return Promise.resolve();
+  if (ytApi) return ytApi;
+  ytApi = new Promise((res, rej) => {
+    const prev = window.onYouTubeIframeAPIReady; window.onYouTubeIframeAPIReady = () => { if (prev) prev(); res(); };
+    const sc = document.createElement('script'); sc.src = 'https://www.youtube.com/iframe_api'; sc.onerror = () => { ytApi = null; rej(new Error('yt')); };
+    document.head.appendChild(sc); setTimeout(() => rej(new Error('timeout')), 12000);
+  });
+  return ytApi;
+}
+/* Weak-internet watchdog: if the video doesn't start (or keeps buffering), the skip button gets loud. */
+function introWatch(on, ms) { clearTimeout(G.introWd); G.introWd = null; if (on) G.introWd = setTimeout(weakNet, ms || 8000); }
+function weakNet() {
+  const b = $('#bIntroSkip'); if (!$('#s-intro').classList.contains('on')) return;
+  b.classList.remove('hidden'); b.className = 'btn orange'; b.style.animation = 'pulse 1.4s infinite'; b.textContent = '📶 النت ضعيف؟ تخطّوا الفيديو';
+  toast('الفيديو بيحمّل ببطء… تقدروا تتخطوه وتكمّلوا المهمة', false, 4500);
+}
+function stopIntro() {
+  clearInterval(introTimer); introWatch(false); G.introTok = (G.introTok || 0) + 1;
+  if (G.yt) { try { G.yt.destroy(); } catch (e) { } G.yt = null; }
+  const v = $('#introVid'); if (v) v.pause(); $('#videoWrap').innerHTML = ''; ov(null);
+}
+function startYT(id, first) {
+  const wrap = $('#videoWrap'), tok = G.introTok;
+  wrap.innerHTML = '<div id="ytPlayer" style="width:100%;height:100%"></div>';
+  loadYT().then(() => {
+    if (tok !== G.introTok) return;
+    const pv = { autoplay: 1, rel: 0, modestbranding: 1, playsinline: 1, iv_load_policy: 3, fs: 1 };
+    if (/^https?:/.test(location.protocol)) pv.origin = location.origin;
+    G.yt = new YT.Player('ytPlayer', { videoId: id, width: '100%', height: '100%', playerVars: pv, events: {
+      onReady: e => { try { e.target.playVideo(); } catch (x) { } },
+      onStateChange: e => { const S = YT.PlayerState;
+        if (e.data === S.PLAYING) introWatch(false);
+        else if (e.data === S.BUFFERING) introWatch(true, 6000);
+        else if (e.data === S.ENDED) { introWatch(false); introProgress(1, 1); introDone(false); } },
+      onError: () => introFail()
+    } });
+    clearInterval(introTimer);
+    introTimer = setInterval(() => { try { introProgress(G.yt.getCurrentTime(), G.yt.getDuration()); } catch (x) { } }, 500);
+  }).catch(() => {
+    if (tok !== G.introTok) return;
+    /* API blocked/slow: plain embed + timer fallback */
+    wrap.innerHTML = embed('https://youtu.be/' + id);
+    if (first) { const T = G.boot.introSec || 110, t0 = Date.now(); clearInterval(introTimer);
+      introTimer = setInterval(() => { const e = (Date.now() - t0) / 1000; introProgress(e, T); if (e >= T) { clearInterval(introTimer); introDone(false); } }, 500); }
+  });
+}
 function openIntro(after) {
-  G.afterIntro = after || null; clearInterval(introTimer);
-  const first = !store.get('introSeen', false), u = G.boot.introUrl, isFile = !/drive\.google|youtu/i.test(u);
+  stopIntro(); G.afterIntro = after || null;
+  const first = !store.get('introSeen', false), u = G.boot.introUrl, yid = ytId(u), isFile = !yid && !/drive\.google/i.test(u);
   show('s-intro'); setScene('boot');
-  $('#bIntroSkip').classList.toggle('hidden', first);
+  const sk = $('#bIntroSkip'); sk.className = 'btn ghost'; sk.style.animation = ''; sk.textContent = 'تخطي الفيديو ⏭';
   const nb = $('#bIntroNext'); nb.disabled = first; nb.style.animation = ''; nb.textContent = first ? 'شاهدوا الفيديو للآخر علشان تكمّلوا' : 'يلا بينا';
-  $('#introTag').textContent = first ? 'رسالة عاجلة من القيادة — لازم تتشاف للآخر' : 'رسالة القيادة';
-  $('#introProg').style.width = '0'; $('#introTime').textContent = ''; ov(null);
+  $('#introTag').textContent = first ? 'رسالة عاجلة من القيادة' : 'رسالة القيادة';
+  $('#introProg').style.width = '0'; $('#introTime').textContent = '';
   const wrap = $('#videoWrap');
-  if (isFile) {
+  introWatch(true, 8000);
+  if (yid) { $('#bIntroSound').classList.add('hidden'); startYT(yid, first); }
+  else if (isFile) {
     wrap.innerHTML = `<video id="introVid" src="${esc(u)}" playsinline preload="auto" ${first ? '' : 'controls'}></video>`;
     const v = $('#introVid'); let maxT = 0;
     v.addEventListener('timeupdate', () => { if (first && v.currentTime > maxT + 1.5) v.currentTime = maxT; maxT = Math.max(maxT, v.currentTime); introProgress(v.currentTime, v.duration); });
-    v.addEventListener('ended', () => introDone(false));
+    v.addEventListener('playing', () => introWatch(false));
+    v.addEventListener('waiting', () => introWatch(true, 6000));
+    v.addEventListener('ended', () => { introWatch(false); introDone(false); });
     v.addEventListener('error', introFail);
     $('#bIntroSound').classList.remove('hidden');
     $('#bIntroSound').onclick = () => { v.muted = !v.muted; $('#bIntroSound').textContent = v.muted ? '🔇' : '🔊'; if (!v.muted) ov(null); if (v.paused) tryPlay(v); };
     tryPlay(v);
   } else {
-    wrap.innerHTML = embed(u); $('#bIntroSound').classList.add('hidden');
+    wrap.innerHTML = embed(u); $('#bIntroSound').classList.add('hidden'); introWatch(false);
     if (first) { const T = G.boot.introSec || 110, t0 = Date.now();
       introTimer = setInterval(() => { const e = (Date.now() - t0) / 1000; introProgress(e, T); if (e >= T) { clearInterval(introTimer); introDone(false); } }, 500); }
   }
@@ -1368,15 +1430,16 @@ async function tryPlay(v) {
 function ov(text, fn) { const o = $('#vidOv'); if (!text) { o.classList.add('hidden'); return; } o.textContent = text; o.classList.remove('hidden'); o.onclick = () => { SFX.unlock(); fn(); }; }
 function introProgress(t, d) { if (!d || !isFinite(d)) return; $('#introProg').style.width = Math.min(100, t / d * 100) + '%'; const r = Math.max(0, Math.ceil(d - t)); $('#introTime').textContent = r ? Math.floor(r / 60) + ':' + String(r % 60).padStart(2, '0') : ''; }
 function introDone(quiet) { store.set('introSeen', true); const b = $('#bIntroNext'); b.disabled = false; b.textContent = 'يلا بينا'; if (!quiet) { SFX.supply(); b.style.animation = 'pulse 1.4s infinite'; } }
-function introFail() { $('#videoWrap').innerHTML = '<div class="center muted" style="height:100%">ماقدرناش نشغّل الفيديو. تأكدوا من الإنترنت، أو كمّلوا.</div>'; ov(null); introDone(true); }
+function introFail() { stopIntro(); $('#videoWrap').innerHTML = '<div class="center muted" style="height:100%">ماقدرناش نشغّل الفيديو. تأكدوا من الإنترنت، أو كمّلوا.</div>'; introDone(true); }
 function leaveIntro() {
-  clearInterval(introTimer); const v = $('#introVid'); if (v) v.pause(); $('#videoWrap').innerHTML = ''; ov(null); SFX.unlock(); SFX.click();
+  stopIntro(); SFX.unlock(); SFX.click();
   const f = G.afterIntro; G.afterIntro = null; if (f) return f();
   if (G.team && G.st) return route();
   if (!store.get('helpSeen', false)) return openHelp(() => show('s-reg'));
   show('s-reg');
 }
-$('#bIntroNext').onclick = leaveIntro; $('#bIntroSkip').onclick = leaveIntro;
+$('#bIntroNext').onclick = leaveIntro;
+$('#bIntroSkip').onclick = () => { store.set('introSeen', true); leaveIntro(); };
 
 /* ======================================================= INSTRUCTIONS */
 function openHelp(after) {
